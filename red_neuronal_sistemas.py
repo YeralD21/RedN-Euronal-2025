@@ -135,6 +135,119 @@ with torch.no_grad():
     predicciones = mejor_modelo(X_test_tensor)
     pred_binarias = (predicciones.numpy() > 0.5).astype(int)
 cm = confusion_matrix(y_test, pred_binarias)
+
+# Extraer métricas específicas de la matriz de confusión
+TN = cm[0, 0]  # Verdaderos Negativos
+FP = cm[0, 1]  # Falsos Positivos ← AQUÍ ESTÁN
+FN = cm[1, 0]  # Falsos Negativos  
+TP = cm[1, 1]  # Verdaderos Positivos
+
+# Imprimir métricas detalladas
+print(f"\n{BOLD}{MAGENTA}=== ANÁLISIS DETALLADO DE LA MATRIZ DE CONFUSIÓN ==={RESET}")
+print(f"{GREEN}Verdaderos Negativos (TN): {TN} casos{RESET}")
+print(f"{YELLOW}Falsos Positivos (FP): {FP} casos{RESET} - Servicios NO óptimos clasificados como óptimos")
+print(f"{RED}Falsos Negativos (FN): {FN} casos{RESET} - Servicios óptimos clasificados como NO óptimos") 
+print(f"{BLUE}Verdaderos Positivos (TP): {TP} casos{RESET}")
+
+# Calcular métricas adicionales
+precision = TP / (TP + FP) if (TP + FP) > 0 else 0
+recall = TP / (TP + FN) if (TP + FN) > 0 else 0
+specificity = TN / (TN + FP) if (TN + FP) > 0 else 0
+f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+
+print(f"\n{BOLD}{CYAN}=== MÉTRICAS CALCULADAS ==={RESET}")
+print(f"Precision: {precision:.3f} ({precision:.1%})")
+print(f"Recall (Sensibilidad): {recall:.3f} ({recall:.1%})")
+print(f"Specificity: {specificity:.3f} ({specificity:.1%})")
+print(f"F1-Score: {f1_score:.3f} ({f1_score:.1%})")
+
+# Análisis de riesgo de falsos positivos
+if FP > 0:
+    tasa_fp = FP / (FP + TN)
+    print(f"\n{BOLD}{YELLOW}⚠️ ANÁLISIS DE FALSOS POSITIVOS:{RESET}")
+    print(f"- Cantidad: {FP} casos de {len(y_test)} pruebas")
+    print(f"- Tasa de Falsos Positivos: {tasa_fp:.3f} ({tasa_fp:.1%})")
+    print(f"- Riesgo: Mantener {FP} servicios en ubicaciones problemáticas")
+    print(f"- Impacto: Posible bajo rendimiento y costos elevados")
+
+# ANÁLISIS DE UMBRALES ALTERNATIVOS
+print(f"\n{BOLD}{CYAN}=== ANÁLISIS DE UMBRALES ALTERNATIVOS ==={RESET}")
+umbrales = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+
+mejor_f1 = 0
+mejor_umbral = 0.5
+
+for umbral in umbrales:
+    # Aplicar umbral personalizado
+    pred_umbral = (predicciones.numpy() > umbral).astype(int)
+    
+    # Calcular matriz de confusión para este umbral
+    from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
+    cm_umbral = confusion_matrix(y_test, pred_umbral)
+    
+    if len(cm_umbral) == 2:  # Asegurar que hay ambas clases
+        tn_u = cm_umbral[0, 0]
+        fp_u = cm_umbral[0, 1] if cm_umbral.shape[1] > 1 else 0
+        fn_u = cm_umbral[1, 0] if cm_umbral.shape[0] > 1 else 0
+        tp_u = cm_umbral[1, 1] if cm_umbral.shape[0] > 1 and cm_umbral.shape[1] > 1 else 0
+    else:
+        # Solo una clase presente
+        if y_test.sum() == 0:  # Solo clase 0
+            tn_u = len(y_test) - pred_umbral.sum()
+            fp_u = pred_umbral.sum()
+            fn_u = 0
+            tp_u = 0
+        else:  # Solo clase 1
+            tn_u = 0
+            fp_u = 0
+            fn_u = len(y_test) - pred_umbral.sum()
+            tp_u = pred_umbral.sum()
+    
+    # Calcular métricas
+    accuracy_u = (tp_u + tn_u) / len(y_test)
+    precision_u = tp_u / (tp_u + fp_u) if (tp_u + fp_u) > 0 else 0
+    recall_u = tp_u / (tp_u + fn_u) if (tp_u + fn_u) > 0 else 0
+    f1_u = 2 * (precision_u * recall_u) / (precision_u + recall_u) if (precision_u + recall_u) > 0 else 0
+    
+    print(f"Umbral {umbral:.1f}: Acc={accuracy_u:.3f}, Prec={precision_u:.3f}, Rec={recall_u:.3f}, F1={f1_u:.3f} | TP={tp_u}, TN={tn_u}, FP={fp_u}, FN={fn_u}")
+    
+    # Guardar el mejor F1-Score
+    if f1_u > mejor_f1:
+        mejor_f1 = f1_u
+        mejor_umbral = umbral
+
+print(f"\n{BOLD}{GREEN}🎯 MEJOR UMBRAL ENCONTRADO: {mejor_umbral} (F1-Score: {mejor_f1:.3f}){RESET}")
+
+# Probar predicción con mejor umbral
+def predecir_con_umbral_optimo(valores, umbral_optimo=mejor_umbral):
+    datos = np.array([valores])
+    datos_escalados = scaler.transform(datos)
+    datos_tensor = torch.FloatTensor(datos_escalados)
+    with torch.no_grad():
+        prediccion = mejor_modelo(datos_tensor)
+        probabilidad = prediccion.item()
+    return int(probabilidad > umbral_optimo), probabilidad
+
+# Probar con los casos de ejemplo usando el mejor umbral
+if 'valores_ficticios' in locals():
+    pred_ficticio_opt, prob_ficticio = predecir_con_umbral_optimo(valores_ficticios)
+    pred_inestable_opt, prob_inestable = predecir_con_umbral_optimo(valores_inestables)
+    pred_estable_opt, prob_estable = predecir_con_umbral_optimo(valores_estables)
+else:
+    # Definir valores de ejemplo si no existen
+    valores_ficticios = [65, 2048, 50, 200, 30, 40, 500, 70, 0.9, 0.3]
+    valores_inestables = [95, 4096, 120, 20, 200, 300, 50, 10, 0.2, 0.9]
+    valores_estables = [40, 1024, 20, 500, 10, 15, 800, 80, 0.95, 0.1]
+    
+    pred_ficticio_opt, prob_ficticio = predecir_con_umbral_optimo(valores_ficticios)
+    pred_inestable_opt, prob_inestable = predecir_con_umbral_optimo(valores_inestables)
+    pred_estable_opt, prob_estable = predecir_con_umbral_optimo(valores_estables)
+
+print(f"\n{BOLD}{MAGENTA}=== PREDICCIONES CON UMBRAL ÓPTIMO ({mejor_umbral}) ==={RESET}")
+print(f"Servicio ficticio: {'Óptimo' if pred_ficticio_opt == 1 else 'No óptimo'} (Prob: {prob_ficticio:.3f})")
+print(f"Servicio inestable: {'Óptimo' if pred_inestable_opt == 1 else 'No óptimo'} (Prob: {prob_inestable:.3f})")
+print(f"Servicio estable: {'Óptimo' if pred_estable_opt == 1 else 'No óptimo'} (Prob: {prob_estable:.3f})")
+
 plt.imshow(cm, cmap='Blues', interpolation='nearest')
 plt.title('Matriz de confusión')
 plt.xlabel('Predicción')
